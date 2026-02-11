@@ -316,6 +316,60 @@ export const exampleQuery = query({
 - Convex storage stores items as `Blob` objects. You must convert all items to/from a `Blob` when using Convex storage.
 
 
+## Frontend guidelines
+
+### Route file structure
+- Routes live in `src/routes/` and use TanStack Router's file-based routing.
+- Each route file exports a `Route` created with `createFileRoute('/path')`.
+- The route tree is auto-generated in `src/routeTree.gen.ts` — do not edit it manually. It regenerates when the dev server is running and route files are added/removed.
+- The root layout is in `src/routes/__root.tsx`.
+
+### Reading data (queries)
+- Use `useSuspenseQuery` from `@tanstack/react-query` with the `convexQuery` adapter from `@convex-dev/react-query`:
+```tsx
+import { useSuspenseQuery } from '@tanstack/react-query'
+import { convexQuery } from '@convex-dev/react-query'
+import { api } from '../../convex/_generated/api'
+
+function MyComponent() {
+  const { data } = useSuspenseQuery(
+    convexQuery(api.myModule.myQuery, { arg1: "value" })
+  )
+  return <div>{data.someField}</div>
+}
+```
+- **IMPORTANT**: Do NOT use `useQuery` from `convex/react`. Always use `useSuspenseQuery` with the `convexQuery` adapter as shown above.
+
+### Writing data (mutations)
+- Use `useMutation` from `convex/react`:
+```tsx
+import { useMutation } from 'convex/react'
+import { api } from '../../convex/_generated/api'
+
+function MyComponent() {
+  const doSomething = useMutation(api.myModule.myMutation)
+  return <button onClick={() => doSomething({ arg1: "value" })}>Click</button>
+}
+```
+
+### Calling actions
+- Use `useAction` from `convex/react`:
+```tsx
+import { useAction } from 'convex/react'
+import { api } from '../../convex/_generated/api'
+
+function MyComponent() {
+  const performAction = useAction(api.myModule.myAction)
+  return <button onClick={() => performAction({ arg1: "value" })}>Run</button>
+}
+```
+
+### Router setup
+- `src/router.tsx` wires together ConvexProvider, React Query's QueryClient, and TanStack Router. You generally don't need to modify this file unless adding new providers.
+
+### Styling
+- Use Tailwind CSS v4 utility classes directly in JSX. Tailwind is already configured.
+
 # Examples:
 ## Example: chat-app
 
