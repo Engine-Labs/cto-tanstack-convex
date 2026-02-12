@@ -4,6 +4,14 @@ globs: **/*.ts,**/*.tsx,**/*.js,**/*.jsx
 ---
 
 # Convex guidelines
+## Common mistakes to avoid
+- Do NOT use `useQuery` from `convex/react` — use `useSuspenseQuery` from `@tanstack/react-query` with `convexQuery` from `@convex-dev/react-query`.
+- Do NOT use `.filter()` on Convex queries — define an index in the schema and use `.withIndex()`.
+- Do NOT forget the `returns` validator on any Convex function. Use `returns: v.null()` for void functions.
+- Do NOT pass `undefined` as a Convex value — use `null` instead.
+- Do NOT use `ctx.db` inside actions — actions cannot access the database directly. Use `ctx.runQuery` / `ctx.runMutation` instead.
+- Do NOT pass functions directly to `ctx.runQuery`, `ctx.runMutation`, `ctx.runAction`, or `ctx.scheduler.runAfter` — use function references (`api.x.y` / `internal.x.y`).
+
 ## Function guidelines
 ### New function syntax
 - ALWAYS use the new function syntax for Convex functions. For example:
@@ -369,6 +377,96 @@ function MyComponent() {
 
 ### Styling
 - Use Tailwind CSS v4 utility classes directly in JSX. Tailwind is already configured.
+
+### TanStack Start routing patterns
+
+#### Creating route files
+- Each route is a file in `src/routes/`. Use `createFileRoute` to define it:
+```tsx
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/about')({
+  component: AboutPage,
+})
+
+function AboutPage() {
+  return <div>About</div>
+}
+```
+- The path string passed to `createFileRoute` must match the file path: `src/routes/about.tsx` → `'/about'`.
+
+#### Dynamic routes
+- Use `$paramName` in the filename: `src/routes/posts/$postId.tsx`
+```tsx
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/posts/$postId')({
+  component: PostPage,
+})
+
+function PostPage() {
+  const { postId } = Route.useParams()
+  return <div>Post {postId}</div>
+}
+```
+
+#### Layout routes
+- `_layout.tsx` files wrap child routes with shared UI:
+```tsx
+// src/routes/_layout.tsx
+import { createFileRoute, Outlet } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/_layout')({
+  component: LayoutComponent,
+})
+
+function LayoutComponent() {
+  return (
+    <div>
+      <nav>Sidebar</nav>
+      <Outlet />
+    </div>
+  )
+}
+```
+- Child routes go in a matching folder: `src/routes/_layout/dashboard.tsx` → `/_layout/dashboard`.
+
+#### Navigation
+- Use `<Link>` for navigation with typed `to` prop:
+```tsx
+import { Link } from '@tanstack/react-router'
+
+<Link to="/about">About</Link>
+<Link to="/posts/$postId" params={{ postId: '123' }}>Post 123</Link>
+```
+- Use `useNavigate()` for programmatic navigation:
+```tsx
+import { useNavigate } from '@tanstack/react-router'
+
+const navigate = useNavigate()
+navigate({ to: '/about' })
+```
+
+#### Route head / meta
+- Set the page title via `head` in route options:
+```tsx
+export const Route = createFileRoute('/about')({
+  head: () => ({ meta: [{ title: 'About' }] }),
+  component: AboutPage,
+})
+```
+
+#### Error handling
+- Use `errorComponent` on routes to catch errors:
+```tsx
+export const Route = createFileRoute('/posts/$postId')({
+  component: PostPage,
+  errorComponent: ({ error }) => <div>Error: {error.message}</div>,
+})
+```
+
+#### Path alias
+- `~/` maps to `src/` via tsconfig paths (e.g., `import { MyComponent } from '~/components/MyComponent'`).
 
 # Examples:
 ## Example: chat-app
@@ -754,5 +852,142 @@ export default defineSchema({
 ```typescript
 export default function App() {
   return <div>Hello World</div>;
+}
+```
+
+## Example: full-stack todo list (TanStack Start + Convex)
+
+This example shows the most common pattern: a route component that reads and writes Convex data.
+
+#### convex/schema.ts
+```typescript
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  categories: defineTable({
+    name: v.string(),
+  }),
+  todos: defineTable({
+    categoryId: v.id("categories"),
+    text: v.string(),
+    completed: v.boolean(),
+  }).index("by_category", ["categoryId"]),
+});
+```
+
+#### convex/todos.ts
+```typescript
+import { query, mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const list = query({
+  args: { categoryId: v.id("categories") },
+  returns: v.array(
+    v.object({
+      _id: v.id("todos"),
+      _creationTime: v.number(),
+      categoryId: v.id("categories"),
+      text: v.string(),
+      completed: v.boolean(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("todos")
+      .withIndex("by_category", (q) => q.eq("categoryId", args.categoryId))
+      .order("desc")
+      .collect();
+  },
+});
+
+export const create = mutation({
+  args: { categoryId: v.id("categories"), text: v.string() },
+  returns: v.id("todos"),
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("todos", {
+      categoryId: args.categoryId,
+      text: args.text,
+      completed: false,
+    });
+  },
+});
+
+export const toggle = mutation({
+  args: { id: v.id("todos") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const todo = await ctx.db.get(args.id);
+    if (!todo) throw new Error("Todo not found");
+    await ctx.db.patch(args.id, { completed: !todo.completed });
+    return null;
+  },
+});
+```
+
+#### src/routes/index.tsx
+```tsx
+import { createFileRoute } from "@tanstack/react-router";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { convexQuery } from "@convex-dev/react-query";
+import { useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { FormEvent, useState } from "react";
+
+export const Route = createFileRoute("/")({
+  component: HomePage,
+});
+
+function HomePage() {
+  // In a real app, you'd select a category dynamically.
+  // This assumes a category ID is known.
+  const categoryId = "YOUR_CATEGORY_ID" as any; // replace with real ID
+
+  const { data: todos } = useSuspenseQuery(
+    convexQuery(api.todos.list, { categoryId }),
+  );
+  const createTodo = useMutation(api.todos.create);
+  const toggleTodo = useMutation(api.todos.toggle);
+  const [text, setText] = useState("");
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    createTodo({ categoryId, text: text.trim() });
+    setText("");
+  };
+
+  return (
+    <div className="mx-auto max-w-md p-4">
+      <h1 className="mb-4 text-2xl font-bold">Todos</h1>
+      <form onSubmit={handleSubmit} className="mb-4 flex gap-2">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Add a todo..."
+          className="flex-1 rounded border px-3 py-2"
+        />
+        <button
+          type="submit"
+          className="rounded bg-blue-600 px-4 py-2 text-white"
+        >
+          Add
+        </button>
+      </form>
+      <ul className="space-y-2">
+        {todos.map((todo) => (
+          <li
+            key={todo._id}
+            className="flex cursor-pointer items-center gap-2 rounded border p-2"
+            onClick={() => toggleTodo({ id: todo._id })}
+          >
+            <span className={todo.completed ? "line-through opacity-50" : ""}>
+              {todo.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 ```
