@@ -11,6 +11,7 @@ globs: **/*.ts,**/*.tsx,**/*.js,**/*.jsx
 - Do NOT pass `undefined` as a Convex value — use `null` instead.
 - Do NOT use `ctx.db` inside actions — actions cannot access the database directly. Use `ctx.runQuery` / `ctx.runMutation` instead.
 - Do NOT pass functions directly to `ctx.runQuery`, `ctx.runMutation`, `ctx.runAction`, or `ctx.scheduler.runAfter` — use function references (`api.x.y` / `internal.x.y`).
+- Do NOT forget to escape `$` in TanStack Router dynamic route filenames when using shell commands. The `$` is interpreted as a variable by the shell. Always use single quotes or a backslash to escape it. For example: `mv foo.tsx 'src/routes/posts/$postId.tsx'` or `mv foo.tsx src/routes/posts/\$postId.tsx`. Using double quotes like `"src/routes/posts/$postId.tsx"` will NOT work because `$postId` gets expanded to an empty string.
 
 ## Function guidelines
 ### New function syntax
